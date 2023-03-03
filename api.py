@@ -4,6 +4,7 @@ from typing import List
 import requests
 from pprint import pprint
 import os
+from functools import lru_cache
 
 
 call_ids = [3166028376916322699]
@@ -11,7 +12,14 @@ call_ids = [3166028376916322699]
 base_url = "https://us-95680.api.gong.io/v2"
 auth_header = f"Basic {os.environ['GONG_API_TOKEN']}"
 
-def get_call_data(call_ids):
+CALLS_CACHE = {}
+
+def _make_hashable(lst):
+    return tuple(sorted(set(lst)))
+
+#@lru_cache
+def _get_call_data(call_ids):
+    call_ids = list(call_ids)
     response = requests.post(
         f"{base_url}/calls/extensive",
         headers={'Authorization': auth_header},
@@ -45,10 +53,28 @@ def get_call_data(call_ids):
             }
         }
     )
-    return response.json()
+    ret = response.json()
+    for call in ret["calls"]:
+        CALLS_CACHE[int(call["metaData"]["id"])] = call
+    return ret
 
+def get_call_data(call_ids):
+    calls_not_in_cache = set()
+    calls = []
+    for call_id in call_ids:
+        if call_id not in CALLS_CACHE:
+            calls_not_in_cache.add(call_id)
+        else:
+            calls.append(CALLS_CACHE[call_id])
 
-def get_transcript_data(call_ids):
+    if calls_not_in_cache:
+        ret = _get_call_data(_make_hashable(calls_not_in_cache))
+        calls.extend(ret["calls"])
+    return {"calls": calls}
+
+#@lru_cache
+def _get_transcript_data(call_ids):
+    call_ids = list(call_ids)
     response = requests.post(
         f"{base_url}/calls/transcript",
         headers={'Authorization': auth_header},
@@ -60,6 +86,16 @@ def get_transcript_data(call_ids):
     )
     return response.json()
 
+def get_transcript_data(call_ids):
+    return _get_transcript_data(_make_hashable(call_ids))
+
+@lru_cache
+def get_user(user_id):
+    response = requests.get(
+        f"{base_url}/users/{user_id}",
+        headers={'Authorization': auth_header},
+    )
+    return response.json()
 
 @dataclass
 class Sentence:
@@ -68,7 +104,7 @@ class Sentence:
     end_ts: int
 
     def __str__(self):
-        return f"({self.start_ts}) {self.text}"
+        return self.text
 
 
 @dataclass
@@ -76,9 +112,33 @@ class Monologue:
     sentences: List[Sentence]
     speaker_id: str
     topic: str
+    call_id: int
+
+    def __getitem__(self, index):
+        return self.sentences.__getitem__(index)
+
+    def __len__(self):
+        return len(self.sentences)
+
+    @property
+    def speaker(self):
+        call_data = get_call_data([self.call_id])["calls"][0]
+        speaker = next((p for p in call_data["parties"] if p["speakerId"] == self.speaker_id), None)
+        if not speaker:
+            return self.speaker_id
+
+        return speaker["name"]
+
+    @property
+    def start_ts(self):
+        return self.sentences[0].start_ts
+
+    @property
+    def end_ts(self):
+        return self.sentences[-1].end_ts
 
     def __str__(self):
-        return " ".join([str(s) for s in sentences]) + "\n"
+        return f"({self.sentences[0].start_ts}) {self.speaker.upper()}: {' '.join([str(s) for s in self.sentences])}\n"
 
 
 if __name__ == "__main__":
@@ -116,7 +176,7 @@ if __name__ == "__main__":
                 )
                 monologue_str.append(s["text"])
                 
-            mono = Monologue(sentences, speaker_id, topic)
+            mono = Monologue(sentences, speaker_id, topic, call_id=int(call_id))
             transcript_monologues.append(mono)
 
             monologue_str = " ".join(monologue_str)
