@@ -7,10 +7,12 @@ import os
 from functools import lru_cache
 
 
-call_ids = [3166028376916322699]
+call_ids = [8269649578171048284]
 
 base_url = "https://us-95680.api.gong.io/v2"
-auth_header = f"Basic {os.environ['GONG_API_TOKEN']}"
+
+def get_auth_header():
+    return f"Basic {os.environ['GONG_API_TOKEN']}"
 
 CALLS_CACHE = {}
 
@@ -22,7 +24,7 @@ def _get_call_data(call_ids):
     call_ids = list(call_ids)
     response = requests.post(
         f"{base_url}/calls/extensive",
-        headers={'Authorization': auth_header},
+        headers={'Authorization': get_auth_header()},
         json={
             "contentSelector": {
                 "context": "Basic",
@@ -77,7 +79,7 @@ def _get_transcript_data(call_ids):
     call_ids = list(call_ids)
     response = requests.post(
         f"{base_url}/calls/transcript",
-        headers={'Authorization': auth_header},
+        headers={'Authorization': get_auth_header()},
         json={
             "filter": {
                 "callIds": call_ids,
@@ -93,7 +95,7 @@ def get_transcript_data(call_ids):
 def get_user(user_id):
     response = requests.get(
         f"{base_url}/users/{user_id}",
-        headers={'Authorization': auth_header},
+        headers={'Authorization': get_auth_header()},
     )
     return response.json()
 
@@ -120,6 +122,9 @@ class Monologue:
     def __len__(self):
         return len(self.sentences)
 
+    def __bool__(self):
+        return bool(self.sentences)
+
     @property
     def speaker(self):
         call_data = get_call_data([self.call_id])["calls"][0]
@@ -131,13 +136,19 @@ class Monologue:
 
     @property
     def start_ts(self):
+        if not self.sentences:
+            return None
         return self.sentences[0].start_ts
 
     @property
     def end_ts(self):
+        if not self.sentences:
+            return None
         return self.sentences[-1].end_ts
 
     def __str__(self):
+        if not self.sentences:
+            return ""
         return f"({self.sentences[0].start_ts}) {self.speaker.upper()}: {' '.join([str(s) for s in self.sentences])}\n"
 
 
@@ -189,5 +200,5 @@ if __name__ == "__main__":
         })
         transcript_text += "\n".join(call_transcript)
 
-    print(transcript_text)
+    print(call_summary)
     # pprint(call_summary)
